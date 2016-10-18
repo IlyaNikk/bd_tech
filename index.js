@@ -3,11 +3,12 @@ const app = koa();
 
 const router = require('koa-router')();
 const route = require('koa-route');
+const moment = require('moment');
 const koaBody = require('koa-body')();
 const logger = require('koa-logger');
 const mysql = require('./mysql');
 
-router.get('/status', function *() {
+router.get('/db/api/status', function *() {
 	let connection = yield mysql.getConnection();
 	let [countUsers, countThreads, countForums, countPosts] = yield [
 		connection.query('select count(id) from Users;'),
@@ -27,66 +28,84 @@ router.get('/status', function *() {
 	this.body = information;
 });
 
+router.post('/db/api/clear/', function *() {
+	let connection = yield mysql.getConnection();
+	yield connection.query('delete from Subscriptions;');
+	yield connection.query('delete from Followers;');
+	yield connection.query('delete from Forums;');
+	yield connection.query('delete from Users;');
+	yield connection.query('delete from Threads;');
+	yield connection.query('delete from Posts;');
+	let information = {
+		code: 0,
+		response: "OK"
+	};
+	this.body = information;
+});
 
 //FORUM
 
-
-router.post('/forum/create', function *() {
+router.post('/db/api/forum/create', function *() {
 	let newForum = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('insert into Forums (name, short_name, user) values (?,?,?);', [newForum.name, newForum.short_name, newForum.user]);
 	let fromForum = yield connection.query('select * from Forums where short_name = ?;', [newForum.short_name]);
 	let information = {
 		code: 0,
-		response: fromForum
+		response: fromForum[0]
 	};
 	this.body = information;
 });
 
-router.get('/forum/details', function *(){
+router.get('/db/api/forum/details', function *(){
 	let forum = this.query.forum;
-	let moreInfo = this.query.related || [];
+	let moreInfo = this.query.related || '';
 	let connection = yield mysql.getConnection();
 	let forumId = yield connection.query('select * from Forums where short_name = ?;', [forum]);
 	if(moreInfo === 'user') {
 		let user = yield connection.query('select * from Users where email = ?;', [forumId[0].user]);
-		let followers = yield connection.query('select * from Followers where followee = ? or follower = ?;', [forumId[0].user, forumId[0].user]);
+		let follower = yield connection.query('select follower from Followers where followee = ?;', [forumId[0].user]);
+		let followee = yield  connection.query('select followee from Followers where follower = ?;', [forumId[0].user]);
 		let subcriptions = yield connection.query('select * from Subscriptions where user = ?;', [forumId[0].user]);
-		user[0].followers = [];
-		user[0].following = [];
-		followers.forEach(function (item, i) {
+		follower.forEach(function(item,i){
 			user[0].followers[i] = item.follower;
+		});
+
+		followee.forEach(function(item,i){
 			user[0].following[i] = item.followee;
 		});
-		user[0].subscriptions = [];
-		subcriptions.forEach(function (item, i) {
+		subcriptions.forEach(function(item,i){
 			user[0].subscriptions[i] = item.thread;
 		});
-		forumId[0].user = user;
+		forumId[0].user = user[0];
 	}
 	let information = {
 		code: 0,
-		response: forumId
+		response: forumId[0]
 	};
 	this.body = information;
 });
 
-router.get('/forum/listPosts', function *() {
+router.get('/db/api/forum/listPosts', function *() {
 	let forum = this.query.forum;
 	let forumData = this.query.since || '0000-00-00 00:00:00';
 	let forumSort = this.query.order || 'desc';
 	let limit = this.query.limit || -1;
-	let moreInfo = this.query.related;
+	let moreInfo = this.query.related || [];
+	if(typeof moreInfo === 'string'){
+		moreInfo = moreInfo.split();
+	}
 	let connection = yield mysql.getConnection();
 	let threadInfo = {};
 	let userInfo = {};
 	let forumInfo = {};
-	if(limmit === -1) {
-		let PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
+	let PostInfo;
+	if(limit === -1) {
+		PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
 			'isSpam, likes , message, parent, likes - dislikes as points, thread, user from Posts where forum = ?' +
 			'and date >= ? order by date ?;', [forum, forumData, forumSort]);
 	} else {
-		let PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
+		PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
 			'isSpam, likes , message, parent, likes - dislikes as points, thread, user from Posts where forum = ?' +
 			'and date >= ? order by date ?;', [forum, forumData, forumSort, +limit]);
 
@@ -122,50 +141,56 @@ router.get('/forum/listPosts', function *() {
 	this.body = information;
 });
 
-router.get('/forum/listThreads', function *() {
+router.get('/db/api/forum/listThreads', function *() {
 	let forum = this.query.forum;
 	let forumData = this.query.since || '0000-00-00 00:00:00';
 	let forumSort = this.query.order || 'desc';
 	let limit = +this.query.limit || -1;
-	let	moreInfo = this.query.related.split();
+	let	moreInfo = this.query.related || [];
+	if(typeof moreInfo === 'string'){
+		moreInfo.split();
+	}
 	let connection = yield mysql.getConnection();
-	console.log(moreInfo[0]);
 	let userInfo = {};
 	let forumInfo = {};
+	let threadInfo;
 	if(limit === -1) {
-		let ThreadInfo = yield connection.query('select id, isClosed, isDeleted, likes, message, likes - dislikes as points, ' +
+		threadInfo = yield connection.query('select date, id, isClosed, isDeleted, likes, message, likes - dislikes as points, ' +
 			'posts, slug, title, forum, user from Threads where forum = ?' +
 			'and date >= ? order by date ?;', [forum, forumData, forumSort]);
 	} else{
-		let ThreadInfo = yield connection.query('select id, isClosed, isDeleted, likes, message, likes - dislikes as points, ' +
+		threadInfo = yield connection.query('select date, id, isClosed, isDeleted, likes, message, likes - dislikes as points, ' +
 			'posts, slug, title, forum, user from Threads where forum = ?' +
 			'and date >= ? order by date ? limit ?;', [forum, forumData, forumSort, +limit]);
 
 	}
+	for(let k = 0; k < threadInfo.length; ++k){
+		threadInfo[k].date = moment(threadInfo[k].date).format('YYYY-MM-DD HH:mm:ss').toString();
+	}
 	for(let i = 0; i < moreInfo.length;++i ){
 		switch (moreInfo[i]) {
 			case 'user':
-				for(let j = 0; j < ThreadInfo.length; ++j){
-					userInfo = yield connection.query('select * from Users where email = ?;', [ThreadInfo[j].user]);
-					ThreadInfo[j].user = userInfo[0];
+				for(let j = 0; j < threadInfo.length; ++j){
+					userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
+					threadInfo[j].user = userInfo[0];
 				}
 				break;
 			case 'forum':
-				for(let j = 0;j < ThreadInfo.length; ++j){
-					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [ThreadInfo[j].forum]);
-					ThreadInfo[j].forum = forumInfo[0];
+				for(let j = 0;j < threadInfo.length; ++j){
+					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
+					threadInfo[j].forum = forumInfo[0];
 				}
 				break;
 		}
 	}
 	let information = {
 		code: 0,
-		response: ThreadInfo
+		response: threadInfo
 	};
 	this.body = information;
 });
 
-router.get('/forum/listUsers', function *() {
+router.get('/db/api/forum/listUsers', function *() {
 	let forum = this.query.forum;
 	let forumSort = this.query.order || 'desc';
 	let connection = yield mysql.getConnection();
@@ -215,54 +240,458 @@ router.get('/forum/listUsers', function *() {
 
 
 
-//POST
+//POSTco
 
 
-router.post('/post/create', function *() {
+router.post('/db/api/post/create', function *() {
 	let newPost = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('insert into Posts (isApproved, user, date, message, isSpam, isHighlighted, thread, forum, ' +
-		'isDeleted, isEdited) values (?,?,?,?,?,?,?,?,?,?);',
+		'isDeleted, isEdited, parent) values (?,?,?,?,?,?,?,?,?,?,?);',
 		[newPost.isApproved, newPost.user, newPost.date, newPost.message, newPost.isSpam,
 			newPost.isHighlighted, newPost.thread, newPost.forum,
-			newPost.isDeleted, newPost.isEdited]);
+			newPost.isDeleted, newPost.isEdited, newPost.parent]);
 	let numOfPost = yield connection.query('select posts from Threads where id = ?', newPost.thread);
 	++numOfPost[0].posts;
-	yield ('insert into Threads (posts) values (?)',[numOfPost[0].posts]);
+	yield connection.query('update Threads set posts = ? where id = ?;', [numOfPost[0].posts, newPost.thread]);
 	let fromPost = yield connection.query('select date, forum,	id,	isApproved, isDeleted, isEdited, isHighlighted, ' +
 		'isSpam, message, parent, thread, user from Posts where message = ? and date = ?', [newPost.message, newPost. date]);
 	let information = {
 		code: 0,
-		response: fromPost
+		response: fromPost[0]
 	};
 	this.body = information;
-
 });
 
+router.get('/db/api/post/details/' , function *(){
+	let postId = this.query.post;
+	let moreInfo = this.query.related || [];
+	if(typeof moreInfo === 'string'){
+		moreInfo = moreInfo.split();
+	}
+	if(postId <= 0){
+		let information = {
+			code: 1,
+			response: {}
+		};
+		this.body = information;
+	} else {
+		let connection = yield mysql.getConnection();
+		let post = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+			'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where id = ?', [postId]);
+		post[0].date = moment(post[0].date).format('YYYY-MM-DD HH:mm:ss').toString();
+		for (let i = 0; i < moreInfo.length; ++i) {
+			switch (moreInfo[i]) {
+				case 'thread':
+					threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes, ' +
+						'message, likes - dislikes as points, posts, slug, title, user from Threads where id = ?;',
+						[post[0].thread]);
+					threadInfo[0].date = moment(threadInfo[0].date).format('YYYY-MM-DD HH:mm:ss').toString();
+					post[0].thread = threadInfo[0];
+					break;
+				case 'user':
+					userInfo = yield connection.query('select * from Users where email = ?;', [post[0].user]);
+					post[0].user = userInfo[0];
+					break;
+				case 'forum':
+					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [post[0].forum]);
+					post[0].forum = forumInfo[0];
+					break;
+			}
+		}
+		let information = {
+			code: 0,
+			response: post[0]
+		};
+		this.body = information;
+	}
+});
+
+router.get('/db/api/post/list/', function *(){
+	let forum = this.query.forum || '';
+	let threadId = this.query.thread || '';
+	let sort = this.query.order || 'desc';
+	let limit = this.query.limit || -1;
+	let data = this.query.since || '0000-00-00 00:00:00';
+	let connection = yield mysql.getConnection();
+	let postList = {};
+	if(threadId === ''){
+		if(limit === -1) {
+			postList = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+				'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where ' +
+				'forum = ? and date >= ? order by date ' + sort + ';', [forum, data]);
+		} else{
+			postList = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+				'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where ' +
+				'forum = ? and date >= ? order by date ' + sort + ' limit ?;', [forum, data, +limit]);
+		}
+	} else {
+		if(limit === -1) {
+			postList = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+				'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where ' +
+				'thread = ? and date >= ? order by date ' + sort + ';', [threadId, data]);
+		} else{
+			postList = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+				'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where ' +
+				'thread = ? and date >= ? order by date ' + sort + ' limit ?;', [threadId, data, +limit]);
+		}
+	}
+	for(let i = 0; i < postList.length; ++i) {
+		postList[i].date = moment(postList[i].date).format('YYYY-MM-DD HH:mm:ss').toString();
+	}
+	let information = {
+		code: 0,
+		response: postList
+	};
+	this.body = information;
+});
+
+router.post('/db/api/post/remove/', function *(){
+	let post = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query('update Posts set isDeleted = ? where id = ?;', [true, post.post]);
+	let information = {
+		code: 0,
+		response: post
+	};
+	this.body = information;
+});
+
+router.post('/db/api/post/restore/', function *(){
+	let postId = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query('update Posts set isDeleted = ? where id = ?;', [false, postId.post]);
+	let information = {
+		code: 0,
+		response: postId
+	};
+	this.body = information;
+});
+
+router.post('/db/api/post/update/', function *() {
+	let post = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query('update Posts set message = ? where id = ?',[post.message, post.post]);
+	yield connection.query('update Posts set isEdited = ? where id = ?', [true, post.post]);
+	let postInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, ' +
+		'isHighlighted, isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where id = ?',
+		[post.post]);
+	let information = {
+		code: 0,
+		response: postInfo
+	};
+	this.body = information;
+});
+
+router.post('/db/api/post/vote/', function *(){
+	let info = this.request.body;
+	let connection = yield mysql.getConnection();
+	let code, response;
+	if(info.vote === 1){
+		let likes = yield connection.query('select likes from Threads where id = ?;', [info.post]);
+		if (likes.length === 0) {
+			code = 1;
+			response = {};
+		} else {
+			++likes[0].likes;
+			console.log(likes[0].likes);
+			yield connection.query('update Threads set likes = ? where id = ?;', [likes[0].likes, info.post]);
+			code = 0;
+			response = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+				'message,likes - dislikes as points, posts, slug ,title,user from Threads ' +
+				'where id = ?;', [info.post]);
+		}
+	} else {
+		let dislikes = yield connection.query('select dislikes from Threads where id = ?;', [info.post]);
+		if(dislikes.length === 0){
+			code = 1;
+			response = {};
+		} else {
+			++dislikes[0].dislikes;
+			yield connection.query('update Threads set dislikes = ? where id = ?;', [dislikes[0].dislikes, info.post]);
+			code = 0;
+			response = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+				'message,likes - dislikes as points, posts,  slug ,title,user from Threads ' +
+				'where id = ?;', [info.post]);
+		}
+	}
+	let information = {
+		code: code,
+		response: response
+	};
+	this.body = information;
+});
 
 //USERS
 
 
-router.post('/user/create', function *() {
+router.post('/db/api/user/create', function *() {
 	let newUser = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('insert into Users (username, about, isAnonymous, name, email) values (?,?,?,?,?);',
-		[newUser.username, newUser.about, newUser.isAnonymous, newUser.name, newUser.email]);
-	let fromPost = yield connection.query('select  about, email, id, isAnonymous, name, username from ' +
-		'Users where email = ?', [newUser.email]);
+	let result = yield connection.query ('select name from Users where email = ?', [newUser.email]);
+	if(result.length !== 0){
+		let information = {
+			code: 5,
+			response: {}
+		};
+		this.body = information;
+	} else {
+		yield connection.query('insert into Users (username, about, isAnonymous, name, email) values (?,?,?,?,?);',
+			[newUser.username, newUser.about, newUser.isAnonymous, newUser.name, newUser.email]);
+		let fromPost = yield connection.query('select  about, email, id, isAnonymous, name, username from ' +
+			'Users where email = ?', [newUser.email]);
+		let information = {
+			code: 0,
+			response: fromPost[0]
+		};
+		this.body = information;
+	}
+});
+
+router.get('/db/api/user/details/', function *() {
+	let email = this.query.user;
+	let connection = yield mysql.getConnection();
+	let user = yield connection.query('select * from Users where email = ?;', [email]);
+	let follower = yield connection.query('select follower from Followers where followee = ?;', [email]);
+	let followee = yield  connection.query('select followee from Followers where follower = ?;', [email]);
+	let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [email]);
+	user[0].followers = [];
+	user[0].following = [];
+	user[0].subscriptions = [];
+	if (follower !== []){
+		follower.forEach(function (item, i) {
+			user[0].followers[i] = item.follower;
+		});
+	}
+	if(followee !== []) {
+		followee.forEach(function (item, i) {
+			user[0].following[i] = item.followee;
+		});
+	}
+	if(subcriptions !== []) {
+		subcriptions.forEach(function (item, i) {
+			user[0].subscriptions[i] = item.thread;
+		});
+	}
 	let information = {
 		code: 0,
-		response: fromPost
+		response: user[0]
 	};
 	this.body = information;
 });
 
+router.post('/db/api/user/follow', function *() {
+	let info = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query('insert into Followers (followee, follower) values (?,?);',[info.followee, info.follower]);
+	let user = yield connection.query('select * from Users where email = ?;', [info.follower]);
+	let follower = yield connection.query('select follower from Followers where followee = ?;', [info.follower]);
+	let followee = yield  connection.query('select followee from Followers where follower = ?;', [info.follower]);
+	let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [info.follower]);
+	user[0].followers = [];
+	user[0].following = [];
+	user[0].subscriptions = [];
+	follower.forEach(function(item,i){
+		user[0].followers[i] = item.follower;
+	});
 
+	followee.forEach(function(item,i){
+		user[0].following[i] = item.followee;
+	});
+	subcriptions.forEach(function(item,i){
+		user[0].subscriptions[i] = item.thread;
+	});
+	let information = {
+		code: 0,
+		response: user
+	};
+	this.body = information;
+});
 
+router.get('/db/api/user/listFollowers', function *() {
+	let email = this.query.user;
+	let order = this.query.order || 'desc';
+	let limit = this.query.limit || -1;
+	let since = this.query.since_id || 0;
+	let connection = yield mysql.getConnection();
+	let users;
+	if(order === 'desc') {
+		if(limit === -1){
+			users = yield connection.query('select follower from Followers join Users on Followers.followee = Users.email' +
+				' where followee = ? and id > ? order by follower desc;', [email, since]);
+		} else{
+			users = yield connection.query('select follower from Followers join Users on Followers.followee = Users.email' +
+				' where followee = ? and id > ? order by follower desc limit ?;', [email, since, +limit]);
+		}
+	} else {
+		if(limit === -1){
+			users = yield connection.query('select follower from Followers join Users on Followers.followee = Users.email' +
+				' where followee = ? and id > ? order by follower asc;', [email, since]);
+		} else {
+			users = yield connection.query('select follower from Followers join Users on Followers.followee = Users.email' +
+				' where followee = ? and id > ? order by follower asc limit ?;', [email, since, +limit]);
+		}
+	}
+	for(let i = 0; i < users.length; ++i) {
+		let info = yield connection.query('select * from Users where email = ?', [users[i].follower]);
+		let follower = yield connection.query('select follower from Followers where followee = ?;', [users[i].follower]);
+		let followee = yield connection.query('select followee from Followers where follower = ?;', [users[i].follower]);
+		let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [users[i].follower]);
+		info[0].followers = [];
+		info[0].following = [];
+		info[0].subscriptions = [];
+		follower.forEach(function (item, i) {
+			info[0].followers[i] = item.follower;
+		});
+		followee.forEach(function (item, i) {
+			info[0].following[i] = item.followee;
+		});
+		subcriptions.forEach(function (item, i) {
+			info[0].subscriptions[i] = item.thread;
+		});
+		users[i] = info[0];
+	}
+	let information = {
+		code: 0,
+		response: users
+	};
+	this.body = information;
+});
+
+router.get('/db/api/user/listFollowing', function *() {
+	let email = this.query.user;
+	let order = this.query.order || 'desc';
+	let limit = this.query.limit || -1;
+	let since = this.query.since_id || 0;
+	let connection = yield mysql.getConnection();
+	let users;
+	if(order === 'desc') {
+		if(limit === -1){
+			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
+				' where follower = ? and id > ? order by followee desc;', [email, since]);
+		} else{
+			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
+				' where follower = ? and id > ? order by followee desc limit ?;', [email, since, +limit]);
+		}
+	} else {
+		if(limit === -1){
+			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
+				' where follower = ? and id > ? order by followee asc;', [email, since]);
+		} else {
+			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
+				' where follower = ? and id > ? order by followee asc limit ?;', [email, since, +limit]);
+		}
+	}
+	for(let i = 0; i < users.length; ++i) {
+		let info = yield connection.query('select * from Users where email = ?', [users[i].followee]);
+		let follower = yield connection.query('select follower from Followers where followee = ?;', [users[i].followee]);
+		let followee = yield connection.query('select followee from Followers where follower = ?;', [users[i].followee]);
+		let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [users[i].followee]);
+		info[0].followers = [];
+		info[0].following = [];
+		info[0].subscriptions = [];
+		follower.forEach(function (item, i) {
+			info[0].followers[i] = item.follower;
+		});
+		followee.forEach(function (item, i) {
+			info[0].following[i] = item.followee;
+		});
+		subcriptions.forEach(function (item, i) {
+			info[0].subscriptions[i] = item.thread;
+		});
+		users[i] = info[0];
+	}
+	let information = {
+		code: 0,
+		response: users
+	};
+	this.body = information;
+});
+
+router.get('/db/api/user/listPosts/', function *(){
+	let email = this.query.user;
+	let order = this.query.order || 'desc';
+	let limit = this.query.limit || -1;
+	let data = this.query.data || '0000-00-00 00:00:00';
+	let connection = yield mysql.getConnection();
+	let posts;
+	if(limit === -1) {
+		posts = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, isHighlighted,' +
+			' isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where user = ? and date >= ?' +
+			' order by date ' + order + ';', [email, data]);
+	} else {
+		posts = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, isHighlighted,' +
+			' isSpam, likes, message, parent, likes - dislikes as points, thread, user from Posts where user = ? and date >= ?' +
+			' order by date ' + order + ' limit ?;', [email, data, +limit]);
+	}
+	for(let i = 0; i < posts.length; ++i){
+		posts[i].date = moment(posts[i].date).format('YYYY-MM-DD HH:mm:ss').toString();
+	}
+	let information = {
+		code: 0,
+		response: posts
+	};
+	this.body = information;
+});
+
+router.post('/db/api/user/unfollow', function *() {
+	let info = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query ('delete from Followers where followee = ? and follower = ?', [info.followee , info.follower]);
+	let user = yield connection.query('select * from Users where email = ?', [info.follower]);
+	let follower = yield connection.query('select follower from Followers where followee = ?;', [info.follower]);
+	let followee = yield connection.query('select followee from Followers where follower = ?;', [info.follower]);
+	let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [info.follower]);
+	user[0].followers = [];
+	user[0].following = [];
+	user[0].subscriptions = [];
+	follower.forEach(function (item, i) {
+		user[0].followers[i] = item.follower;
+	});
+	followee.forEach(function (item, i) {
+		user[0].following[i] = item.followee;
+	});
+	subcriptions.forEach(function (item, i) {
+		user[0].subscriptions[i] = item.thread;
+	});
+	let information = {
+		code: 0,
+		response: user[0]
+	};
+	this.body = information;
+})
+
+router.post('/db/api/user/updateProfile/', function *() {
+	let info = this.request.body;
+	let connection = yield mysql.getConnection();
+	yield connection.query('update Users set about = ? where email = ?', [info.about, info.user]);
+	yield connection.query('update Users set name = ? where email = ?', [info.name, info.user]);
+	let user = yield connection.query('select * from Users where email = ?', [info.user]);
+	let follower = yield connection.query('select follower from Followers where followee = ?;', [info.user]);
+	let followee = yield connection.query('select followee from Followers where follower = ?;', [info.user]);
+	let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [info.user]);
+	user[0].followers = [];
+	user[0].following = [];
+	user[0].subscriptions = [];
+	follower.forEach(function (item, i) {
+		user[0].followers[i] = item.follower;
+	});
+	followee.forEach(function (item, i) {
+		user[0].following[i] = item.followee;
+	});
+	subcriptions.forEach(function (item, i) {
+		user[0].subscriptions[i] = item.thread;
+	});
+	let information = {
+		code: 0,
+		response: user[0]
+	};
+	this.body = information;
+});
 //THREAD
 
 
-router.post('/thread/close', function *(){
+router.post('/db/api/thread/close', function *(){
 	let closeThread = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('update Threads set isClosed = true where id = ?;',[closeThread.thread]);
@@ -275,7 +704,7 @@ router.post('/thread/close', function *(){
 });
 
 
-router.post('/thread/create', function *() {
+router.post('/db/api/thread/create', function *() {
 	let newThread = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('insert into Threads (forum, title, isClosed, user, date, message, slug, isDeleted) values (?,?,?,?,?,?,?,?);',
@@ -286,44 +715,61 @@ router.post('/thread/create', function *() {
 		[newThread.title, newThread.date, newThread.message]);
 	let information = {
 		code: 0,
-		response: fromThread
+		response: fromThread[0]
 	};
 	this.body = information;
 });
 
-router.get('/thread/details/', function *(){
+router.get('/db/api/thread/details/', function *(){
 	let threadId = this.query.thread;
 	let moreInfo = this.query.related || [];
+	if(typeof moreInfo === 'string'){
+		moreInfo.split();
+	}
 	let connection = yield mysql.getConnection();
-	let threadBuffer = yield connection.query('select likes, dislikes from Threads where id = ?;',[threadId]);
 	let threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
 			'message, likes - dislikes as points, posts, slug ,title,user from Threads where id = ?;', [threadId]);
-	for(let i = 0; i < moreInfo.length;++i ){
-		switch (moreInfo[i]) {
-			case 'user':
-				for(let j = 0; j < ThreadInfo.length; ++j){
-					userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
-					threadInfo[j].user = userInfo[0];
-				}
-				break;
-			case 'forum':
-				for(let j = 0;j < ThreadInfo.length; ++j){
-					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
-					threadInfo[j].forum = forumInfo[0];
-				}
-				break;
+	let thread = false;
+	for(let i = 0; i < moreInfo.length; ++i){
+		if(moreInfo[i] === 'thread'){
+			thread = true;
 		}
 	}
-	let information = {
-		code: 0,
-		response: threadInfo
-	};
-	this.body = information;
+	if(threadInfo.length === 0 || thread){
+		let information = {
+			code: 3,
+			response: {}
+		};
+		this.body = information;
+	}else {
+		threadInfo[0].date = moment(threadInfo[0].date).format('YYYY-MM-DD HH:mm:ss').toString();
+		for (let i = 0; i < moreInfo.length; ++i) {
+			switch (moreInfo[i]) {
+				case 'user':
+					for (let j = 0; j < threadInfo.length; ++j) {
+						userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
+						threadInfo[j].user = userInfo[0];
+					}
+					break;
+				case 'forum':
+					for (let j = 0; j < threadInfo.length; ++j) {
+						forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
+						threadInfo[j].forum = forumInfo[0];
+					}
+					break;
+			}
+		}
+		let information = {
+			code: 0,
+			response: threadInfo[0]
+		};
+		this.body = information;
+	}
 });
 
-router.get('/thread/list', function *(){
+router.get('/db/api/thread/list', function *(){
 	let threadData = this.query.since || '0000-00-00 00:00:00';
-	let threadSort = this.query.order || 'desc';
+	let order = this.query.order || 'desc';
 	let limit = this.query.limit || -1;
 	let threadUser = this.query.user || false;
 	let threadForum = this.query.forum || false;
@@ -331,21 +777,29 @@ router.get('/thread/list', function *(){
 	let connection = yield mysql.getConnection();
 	if(threadUser == false) {
 		if(limit === -1) {
-			threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-				'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? order by date ?;',
-				[threadForum, threadData, threadSort]);
+			if(order === 'desc') {
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+					'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? ' +
+					'order by date desc;', [threadForum, threadData]);
+			} else {
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+					'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? ' +
+					'order by date asc;', [threadForum, threadData]);
+			}
 		} else {
-			threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-				'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? ' +
-				'order by date ? limit ?;',	[threadForum, threadData, threadSort, +limit]);
+			if(order === 'desc') {
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+					'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? ' +
+					'order by date desc limit ?;', [threadForum, threadData, +limit]);
+			} else {
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+					'message,likes - dislikes as points, posts, slug ,title,user from Threads where forum = ? and date >= ? ' +
+					'order by date asc limit ?;', [threadForum, threadData, +limit]);
+			}
 		}
-	} else {
-		if(limit === -1)
-		threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-			'message,likes - dislikes as points, posts, slug ,title,user from Threads where user = ?and date >= ?' +
-			' order by date ? limit ?;',
-			[threadForum, threadData, threadSort, +limit]);
-
+	}
+	for(let i = 0;i < threadInfo.length; ++i) {
+		threadInfo[i].date = moment(threadInfo[i].date).format('YYYY-MM-DD HH:mm:ss').toString();
 	}
 	let information = {
 		code: 0,
@@ -355,12 +809,11 @@ router.get('/thread/list', function *(){
 });
 
 
-router.get('/thread/listPosts/', function *(){
+router.get('/db/api/thread/listPosts/', function *(){
 	let threadData = this.query.since || '0000-00-00 00:00:00';
 	let threadSort = this.query.order || 'desc';
 	let threadId = this.query.thread;
 	let limit = this.query.limit || -1;
-	console.log(threadId,threadData, threadSort);
 	let threadInfo = {};
 	let connection = yield mysql.getConnection();
 	if(limit === -1) {
@@ -374,6 +827,9 @@ router.get('/thread/listPosts/', function *(){
 			'from Posts where thread = ? and date >= ? order by date ? limit ?;',
 			[threadId, threadData, threadSort, +limit]);
 	}
+	for(let i = 0;i < threadInfo.length; ++i) {
+		threadInfo[i].date = moment(threadInfo[i].date).format('YYYY-MM-DD HH:mm:ss').toString();
+	}
 	let information = {
 		code: 0,
 		response: threadInfo
@@ -381,10 +837,10 @@ router.get('/thread/listPosts/', function *(){
 	this.body = information;
 });
 
-router.post('/thread/open', function *(){
+router.post('/db/api/thread/open', function *(){
 	let idThread = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('update Threads set isClosed = 0 where id = ?;', [idThread.thread]);
+	yield connection.query('update Threads set isClosed = ? where id = ?;', [false, idThread.thread]);
 	let information = {
 		code: 0,
 		response: idThread
@@ -392,10 +848,10 @@ router.post('/thread/open', function *(){
 	this.body = information;
 });
 
-router.post('/thread/remove', function *(){
+router.post('/db/api/thread/remove', function *(){
 	let idThread = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('update Threads set isDeleted = 1 where id = ?;', [idThread.thread]);
+	yield connection.query('update Threads set isDeleted = ? where id = ?;', [true, idThread.thread]);
 	let information = {
 		code: 0,
 		response: idThread
@@ -403,10 +859,10 @@ router.post('/thread/remove', function *(){
 	this.body = information;
 });
 
-router.post('/thread/restore', function *(){
+router.post('/db/api/thread/restore', function *(){
 	let idThread = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('update Threads set isDeleted = 0 where id = ?;', [idThread.thread]);
+	yield connection.query('update Threads set isDeleted = ? where id = ?;', [false, idThread.thread]);
 	let information = {
 		code: 0,
 		response: idThread
@@ -414,18 +870,28 @@ router.post('/thread/restore', function *(){
 	this.body = information;
 });
 
-router.post('/thread/subscribe', function *(){
+router.post('/db/api/thread/subscribe', function *(){
 	let info = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('insert into Subscriptions (thread,user) values (?,?);', [info.thread, info.user]);
-	let information = {
-		code: 0,
-		response: info
-	};
-	this.body = information;
+	let check = yield connection.query ('select * from Subscriptions where thread = ? and user = ?', [info.thread, info.user]);
+	if(check.length === 0){
+		yield connection.query('insert into Subscriptions (thread,user) values (?,?);', [info.thread, info.user]);
+		let information = {
+			code: 0,
+			response: info
+		};
+		this.body = information;
+	} else {
+		let information = {
+			code: 5,
+			response: {}
+		};
+		this.body = information;
+	}
+
 });
 
-router.post('/thread/unsubscribe', function *(){
+router.post('/db/api/thread/unsubscribe', function *(){
 	let info = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('delete from Subscriptions where thread = ? and user = ?;', [info.thread, info.user]);
@@ -436,11 +902,11 @@ router.post('/thread/unsubscribe', function *(){
 	this.body = information;
 });
 
-router.post('/thread/update', function *(){
+router.post('/db/api/thread/update', function *(){
 	let info = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield  connection.query('update Threads set message = ? where id = ?;', [info.message, info.thread]);
-	yield  connection.query('update Threads set slug = ? where id = ?;', [info.slug, info.thread]);
+	yield connection.query('update Threads set message = ? where id = ?;', [info.message, info.thread]);
+	yield connection.query('update Threads set slug = ? where id = ?;', [info.slug, info.thread]);
 	let information = {
 		code: 0,
 		response: yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
@@ -451,7 +917,7 @@ router.post('/thread/update', function *(){
 	this.body = information;
 });
 
-router.post('/thread/vote', function *(){
+router.post('/db/api/thread/vote', function *(){
 	let info = this.request.body;
 	let connection = yield mysql.getConnection();
 	if(info.vote === 1){
