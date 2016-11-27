@@ -101,7 +101,7 @@ router.get('/db/api/forum/listPosts', function *() {
 	let forumInfo = {};
 	let PostInfo;
 	if (limit === -1) {
-		if(forumSort === 'desc') {
+		if (forumSort === 'desc') {
 			PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
 				'isSpam, likes , message, parent, likes - dislikes as points, thread, user from Posts where forum = ?' +
 				'and date >= ? order by date desc ;', [forum, forumData]);
@@ -111,7 +111,7 @@ router.get('/db/api/forum/listPosts', function *() {
 				'and date >= ? order by date asc ;', [forum, forumData]);
 		}
 	} else {
-		if(forumSort === 'desc') {
+		if (forumSort === 'desc') {
 			PostInfo = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted,isEdited, isHighlighted, ' +
 				'isSpam, likes , message, parent, likes - dislikes as points, thread, user from Posts where forum = ?' +
 				'and date >= ? order by date desc limit ?;', [forum, forumData, +limit]);
@@ -121,7 +121,7 @@ router.get('/db/api/forum/listPosts', function *() {
 				'and date >= ? order by date asc limit ?;', [forum, forumData, +limit]);
 		}
 	}
-	for(let j = 0; j < PostInfo.length; ++j){
+	for (let j = 0; j < PostInfo.length; ++j) {
 		PostInfo[j].date = moment(PostInfo[j].date).format('YYYY-MM-DD HH:mm:ss').toString();
 	}
 	for (let i = 0; i < moreInfo.length; ++i) {
@@ -162,10 +162,8 @@ router.get('/db/api/forum/listThreads', function *() {
 	let forumSort = this.query.order || 'desc';
 	let limit = this.query.limit || -1;
 	let moreInfo = this.query.related || [];
-	console.log(moreInfo);
 	if (typeof moreInfo === 'string') {
-		moreInfo = moreInfo.split(' ');
-		console.log(typeof moreInfo, moreInfo);
+		moreInfo = [moreInfo];
 	}
 	let connection = yield mysql.getConnection();
 	let forumInfo;
@@ -187,7 +185,6 @@ router.get('/db/api/forum/listThreads', function *() {
 	for (let i = 0; i < moreInfo.length; ++i) {
 		switch (moreInfo[i]) {
 			case 'user':
-				console.log('looooool');
 				for (let j = 0; j < threadInfo.length; ++j) {
 					userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
 					let follower = yield connection.query('select follower from Followers where followee = ?;', [userInfo[0].email]);
@@ -218,7 +215,6 @@ router.get('/db/api/forum/listThreads', function *() {
 				}
 				break;
 			case 'forum':
-				console.log('looooool');
 				for (let j = 0; j < threadInfo.length; ++j) {
 					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
 					threadInfo[j].forum = forumInfo[0];
@@ -256,22 +252,21 @@ router.get('/db/api/forum/listUsers', function *() {
 		} else {
 			user = yield connection.query('select about, email, Users.id, isAnonymous, Users.name, username from Users inner join ' +
 				' Posts on Users.email = Posts.user where forum = ? and Users.id >= ? group by Posts.user order by Users.name desc limit ?;',
-				[forum,since_id, +limit]);
+				[forum, since_id, +limit]);
 		}
 	}
 	for (let i = 0; i < user.length; ++i) {
-		console.log(user[i].email);
 		let follower = yield connection.query('select follower from Followers where followee = ?;', [user[i].email]);
 		let followee = yield  connection.query('select followee from Followers where follower = ?;', [user[i].email]);
 		let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [user[i].email]);
-		if(follower.length !== 0) {
+		if (follower.length !== 0) {
 			follower.forEach(function (item, j) {
 				user[i].followers[j] = item.follower;
 			});
 		} else {
 			user[i].followers = [];
 		}
-		if(followee.length !== 0) {
+		if (followee.length !== 0) {
 			followee.forEach(function (item, j) {
 				user[i].following[j] = item.followee;
 			});
@@ -279,7 +274,7 @@ router.get('/db/api/forum/listUsers', function *() {
 			user[i].following = [];
 		}
 		user[i].subscriptions = [];
-		if(subcriptions.length !== 0) {
+		if (subcriptions.length !== 0) {
 			subcriptions.forEach(function (item, j) {
 				user[i].subscriptions[j] = item.thread;
 			});
@@ -305,6 +300,26 @@ router.post('/db/api/post/create', function *() {
 		[newPost.isApproved, newPost.user, newPost.date, newPost.message, newPost.isSpam,
 			newPost.isHighlighted, newPost.thread, newPost.forum,
 			newPost.isDeleted, newPost.isEdited, newPost.parent]);
+	let id = yield connection.query('select id from Posts where user = ? and thread = ? and forum = ? and message = ? and date = ?', [newPost.user,
+		newPost.thread, newPost.forum, newPost.message, newPost.date]);
+	let sorter = '';
+	let sorter_date = '';
+	let sort;
+	if (newPost.parent > 0) {
+		sort = yield connection.query('select sorter from Posts where id = ?;', [newPost.parent]);
+		sorter = sort[0].sorter + '.';
+		let num = sorter.indexOf('.');
+		sorter_date = sorter.slice(0, num);
+	} else {
+		sorter_date = '0' + id[0].id;
+	}
+	let buffer = '' + id[0].id;
+	let nu = '';
+	for (let i = 0; i < 6 - buffer.length; ++i) {
+		nu = nu + '0';
+	}
+	yield connection.query('update Posts set sorter = ?, sorter_date = ? where id = ?',
+		[sorter + nu + id[0].id, sorter_date, id[0].id]);
 	let numOfPost = yield connection.query('select posts from Threads where id = ?', newPost.thread);
 	++numOfPost[0].posts;
 	yield connection.query('update Threads set posts = ? where id = ?;', [numOfPost[0].posts, newPost.thread]);
@@ -455,7 +470,6 @@ router.post('/db/api/post/vote/', function *() {
 			response = {};
 		} else {
 			++likes[0].likes;
-			console.log(likes[0].likes);
 			yield connection.query('update Posts set likes = ? where id = ?;', [likes[0].likes, info.post]);
 			code = 0;
 			response = yield connection.query('select date, dislikes, forum, id, isApproved, isDeleted, isEdited, isHighlighted' +
@@ -784,7 +798,7 @@ router.get('/db/api/thread/details/', function *() {
 	let threadId = this.query.thread;
 	let moreInfo = this.query.related || [];
 	if (typeof moreInfo === 'string') {
-		moreInfo.split();
+		moreInfo = moreInfo.split(' ');
 	}
 	let connection = yield mysql.getConnection();
 	let threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
@@ -837,55 +851,25 @@ router.get('/db/api/thread/list', function *() {
 	let connection = yield mysql.getConnection();
 	if (!threadUser) {
 		if (limit === -1) {
-			if (order === 'desc') {
-				threadInfo = yield connection.query('select Threads.date, Threads.dislikes, Threads.forum, Threads.id, ' +
-					'Threads.isClosed, Threads.isDeleted, Threads.likes, Threads.message, Threads.likes - Threads.dislikes as ' +
-					'points, Threads.posts, Threads.slug, Threads.title, Threads.user from Threads right join Forums on Threads.slug = ' +
-					' Forums.short_name where Forums.short_name = ? and date >= ? ' +
-					'order by date desc;', [threadForum, threadData]);
-			} else {
-				threadInfo = yield connection.query('select Threads.date, Threads.dislikes, Threads.forum, Threads.id, ' +
-					'Threads.isClosed, Threads.isDeleted, Threads.likes, Threads.message, Threads.likes - Threads.dislikes as ' +
-					'points, Threads.posts, Threads.slug ,Threads.title,Threads.user from Threads right join Forums on Threads.slug = ' +
-					' Forums.short_name where Forums.short_name = ? and date >= ? ' +
-					'order by date asc;', [threadForum, threadData]);
-			}
+			threadInfo = yield connection.query('select date, dislikes, forum, id, ' +
+				'isClosed, isDeleted, likes, message, likes - dislikes as ' +
+				'points, posts, slug, title, user from Threads where forum = ? and date >= ? ' +
+				'order by date ' + order + ' ;', [threadForum, threadData]);
 		} else {
-			if (order === 'desc') {
-				threadInfo = yield connection.query('select Threads.date, Threads.dislikes, Threads.forum, Threads.id, ' +
-					'Threads.isClosed, Threads.isDeleted, Threads.likes, Threads.message, Threads.likes - Threads.dislikes as ' +
-					'points, Threads.posts, Threads.slug ,Threads.title,Threads.user from Threads right join Forums on Threads.slug = ' +
-					' Forums.short_name where Forums.short_name = ? and date >= ? ' +
-					'order by date desc limit ?;', [threadForum, threadData, +limit]);
-			} else {
-				threadInfo = yield connection.query('select Threads.date, Threads.dislikes, Threads.forum, Threads.id, Threads.isClosed,' +
-					' Threads.isDeleted, Threads.likes, Threads.message,Threads.likes - Threads.dislikes as points,  Threads.posts, ' +
-					'Threads.slug ,Threads.title,Threads.user from Threads right join Forums on Threads.slug = ' +
-					' Forums.short_name where Forums.short_name = ? and date >= ? ' +
-					'order by date asc limit ?;', [threadForum, threadData, +limit]);
-			}
+			threadInfo = yield connection.query('select date, dislikes, forum, id, ' +
+				'isClosed, isDeleted, likes, message, likes - dislikes as ' +
+				'points, posts, slug , title, user from Threads where forum = ? and date >= ? ' +
+				'order by date ' + order + ' limit ?;', [threadForum, threadData, +limit]);
 		}
 	} else {
 		if (limit === -1) {
-			if (order === 'desc') {
-				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-					'message,likes - dislikes as points, posts, slug ,title,user from Threads where user = ? and date >= ? ' +
-					'order by date desc;', [threadUser, threadData]);
-			} else {
-				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-					'message,likes - dislikes as points, posts, slug ,title,user from Threads  where user ' +
-					'= ? and date >= ? order by date asc;', [threadUser, threadData]);
-			}
+			threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+				'message,likes - dislikes as points, posts, slug ,title,user from Threads where user = ? and date >= ? ' +
+				'order by date ' + order + ';', [threadUser, threadData]);
 		} else {
-			if (order === 'desc') {
-				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-					'message,likes - dislikes as points, posts, slug ,title,user from Threads where user = ? and date >= ? ' +
-					'order by date desc limit ?;', [threadUser, threadData, +limit]);
-			} else {
-				threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
-					'message,likes - dislikes as points, posts, slug ,title,user from Threads  where user = ? and date >= ? ' +
-					'order by date asc limit ?;', [threadUser, threadData, +limit]);
-			}
+			threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes,' +
+				'message,likes - dislikes as points, posts, slug ,title,user from Threads where user = ? and date >= ? ' +
+				'order by date ' + order + ' limit ?;', [threadUser, threadData, +limit]);
 		}
 	}
 	for (let i = 0; i < threadInfo.length; ++i) {
@@ -901,26 +885,33 @@ router.get('/db/api/thread/list', function *() {
 
 router.get('/db/api/thread/listPosts/', function *() {
 	let threadData = this.query.since || '0000-00-00 00:00:00';
+	let dateTrue = new Date();
+	dateTrue.setFullYear(+threadData.substring(0, 4), +threadData.substring(5, 7), +threadData.substring(8, 10));
+	dateTrue.setHours(+threadData.substring(11, 13), +threadData.substring(14, 16), +threadData.substring(17, 19));
+	let bufdate = Date.parse(threadData);
+	let date = new Date();
+	date.setTime(bufdate);
 	let order = this.query.order || 'desc';
 	let sort = this.query.sort || 'flat';
 	let threadId = this.query.thread;
 	let limit = this.query.limit || -1;
-	let threadInfo = {};
+	let threadInfo;
 	let connection = yield mysql.getConnection();
 	let information;
-	switch (sort){
+	switch (sort) {
 		case 'flat' :
 			if (limit === -1) {
 				threadInfo = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, Posts.isApproved,' +
 					' Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, Posts.message, ' +
-					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts right join ' +
-					'Threads on Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by Threads.date ' +
+					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts ' +
+					'where thread = ? and date >= ? order by date ' +
 					order + ';', [threadId, threadData]);
+
 			} else {
 				threadInfo = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, Posts.isApproved,' +
 					' Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, Posts.message, ' +
-					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts right join ' +
-					'Threads on Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by Threads.date ' +
+					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts ' +
+					'where thread = ? and date >= ? order by date ' +
 					order + ' limit ?;', [threadId, threadData, +limit]);
 			}
 			for (let i = 0; i < threadInfo.length; ++i) {
@@ -934,18 +925,16 @@ router.get('/db/api/thread/listPosts/', function *() {
 			break;
 		case 'tree' :
 			if (limit === -1) {
-				threadInfo = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, Posts.isApproved,' +
-					' Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, Posts.message, ' +
-					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts right join ' +
-					'Threads on Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by ' +
-					'Threads.id, Threads.date ' + order + ';',
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isApproved,' +
+					' isDeleted, isEdited, isHighlighted, isSpam, likes, message, ' +
+					'parent, likes - dislikes as points, thread, user from Posts where thread = ? and ' +
+					'date >= ? order by sorter_date' + order + ', sorter asc;',
 					[threadId, threadData]);
 			} else {
-				threadInfo = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, Posts.isApproved,' +
-					' Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, Posts.message, ' +
-					'Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts right join ' +
-					'Threads on Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by ' +
-					'Threads.id, Threads.date ' + order + ' limit ?;',
+				threadInfo = yield connection.query('select date, dislikes, forum, id, isApproved,' +
+					' isDeleted, isEdited, isHighlighted, isSpam, likes, message, ' +
+					'parent, likes - dislikes as points, thread, user from Posts where ' +
+					'thread = ? and date >= ? order by sorter_date ' + order + ', sorter asc limit ?;',
 					[threadId, threadData, +limit]);
 			}
 			for (let i = 0; i < threadInfo.length; ++i) {
@@ -959,23 +948,17 @@ router.get('/db/api/thread/listPosts/', function *() {
 			break;
 		case 'parent_tree' :
 			if (limit === -1) {
-				threadInfo = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, Posts.isApproved,' +
-					' Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, Posts.message, Posts.parent,' +
-					' Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from Posts right join Threads on ' +
-					'Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by Threads.id, Threads.date ' +
-					order + ';', [threadId, threadData]);
+				threadInfo = yield connection.query('select P.id, P.message, P.date, P.likes, P.dislikes, (P.likes-P.dislikes) as points, ' +
+					'P.isApproved, P.isHighlighted, P.isEdited, P.isSpam, P.isDeleted, P.parent, P.thread, P.user, P.forum from' +
+					' Posts P inner join (select distinct sorter_date from Posts where thread = ? order by sorter_date ' + order +
+					', sorter asc) A on P.sorter_date = A.sorter_date where P.date >= ? order by P.sorter_date ' + order +
+					', P.sorter asc;', [threadId, date]);
 			} else {
-				let threads = yield connection.query('select id from Threads where date >= ? order by date ' + order +
-					' limit ?;', [threadData, +limit]);
-				threadInfo = [];
-				for(let i = 0; i < threads.length; ++i) {
-					threadInfo[i] = yield connection.query('select Posts.date, Posts.dislikes, Posts.forum, Posts.id, ' +
-						'Posts.isApproved, Posts.isDeleted, Posts.isEdited, Posts.isHighlighted, Posts.isSpam, Posts.likes, ' +
-						'Posts.message, Posts.parent, Posts.likes - Posts.dislikes as points, Posts.thread, Posts.user from ' +
-						'Posts right join Threads on Threads.id = Posts.thread where thread = ? and Threads.date >= ? order by ' +
-						'Threads.id, Threads.date ' + order + ';',
-						[threadId, threadData]);
-				}
+				threadInfo = yield connection.query('select P.id, P.message, P.date, P.likes, P.dislikes, (P.likes-P.dislikes) as points, ' +
+					'P.isApproved, P.isHighlighted, P.isEdited, P.isSpam, P.isDeleted, P.parent, P.thread, P.user, P.forum from' +
+					' Posts P inner join (select distinct sorter_date from Posts where thread = ? order by sorter_date ' + order +
+					', sorter asc limit ? ) A on P.sorter_date = A.sorter_date where P.date >= ? order by P.sorter_date ' + order +
+					', P.sorter asc;', [threadId, +limit, date]);
 			}
 			for (let i = 0; i < threadInfo.length; ++i) {
 				threadInfo[i].date = moment(threadInfo[i].date).format('YYYY-MM-DD HH:mm:ss').toString();
@@ -1004,8 +987,8 @@ router.post('/db/api/thread/remove', function *() {
 	let idThread = this.request.body;
 	let connection = yield mysql.getConnection();
 	yield connection.query('update Threads set isDeleted = ? where id = ?;', [true, idThread.thread]);
-	yield connection.query('update Threads set posts = 0 where id = ?;',[idThread.thread]);
-	yield connection.query('update Posts set isDeleted = ? where thread = ?;', 	[true, idThread.thread]);
+	yield connection.query('update Threads set posts = 0 where id = ?;', [idThread.thread]);
+	yield connection.query('update Posts set isDeleted = ? where thread = ?;', [true, idThread.thread]);
 	let information = {
 		code: 0,
 		response: idThread
