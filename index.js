@@ -8,6 +8,9 @@ const koaBody = require('koa-body')();
 const logger = require('koa-logger');
 const mysql = require('./mysql');
 
+let newID = 0;
+let get = false;
+
 router.get('/db/api/status', function *() {
 	let connection = yield mysql.getConnection();
 	let [countUsers, countThreads, countForums, countPosts] = yield [
@@ -48,8 +51,10 @@ router.post('/db/api/clear/', function *() {
 router.post('/db/api/forum/create', function *() {
 	let newForum = this.request.body;
 	let connection = yield mysql.getConnection();
-	yield connection.query('insert into Forums (name, short_name, user) values (?,?,?);', [newForum.name, newForum.short_name, newForum.user]);
-	let fromForum = yield connection.query('select * from Forums where short_name = ?;', [newForum.short_name]);
+	let fromForum = yield [connection.query('insert into Forums (name, short_name, user) values (?,?,?);',
+		[newForum.name, newForum.short_name, newForum.user]),
+	 connection.query('select * from Forums where short_name = ?;', [newForum.short_name])
+	];
 	let information = {
 		code: 0,
 		response: fromForum[0]
@@ -182,50 +187,57 @@ router.get('/db/api/forum/listThreads', function *() {
 		threadInfo[k].date = moment(threadInfo[k].date).format('YYYY-MM-DD HH:mm:ss').toString();
 	}
 	let userInfo;
-	for (let i = 0; i < moreInfo.length; ++i) {
-		switch (moreInfo[i]) {
-			case 'user':
-				for (let j = 0; j < threadInfo.length; ++j) {
-					userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
-					let follower = yield connection.query('select follower from Followers where followee = ?;', [userInfo[0].email]);
-					let followee = yield  connection.query('select followee from Followers where follower = ?;', [userInfo[0].email]);
-					let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [userInfo[0].email]);
-					if (follower.length !== 0) {
-						follower.forEach(function (item, j) {
-							userInfo[0].followers[j] = item.follower;
-						});
-					} else {
-						userInfo[0].followers = [];
-					}
-					if (followee.length !== 0) {
-						followee.forEach(function (item, j) {
-							userInfo[0].following[j] = item.followee;
-						});
-					} else {
-						userInfo[0].following = [];
-					}
-					userInfo[0].subscriptions = [];
-					if (subcriptions.length !== 0) {
-						subcriptions.forEach(function (item, j) {
-							userInfo[0].subscriptions[j] = item.thread;
-						});
-					}
+	if(Clear) {
+		for (let i = 0; i < moreInfo.length; ++i) {
+			switch (moreInfo[i]) {
+				case 'user':
+					for (let j = 0; j < threadInfo.length; ++j) {
+						userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
+						let follower = yield connection.query('select follower from Followers where followee = ?;', [userInfo[0].email]);
+						let followee = yield  connection.query('select followee from Followers where follower = ?;', [userInfo[0].email]);
+						let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [userInfo[0].email]);
+						if (follower.length !== 0) {
+							follower.forEach(function (item, j) {
+								userInfo[0].followers[j] = item.follower;
+							});
+						} else {
+							userInfo[0].followers = [];
+						}
+						if (followee.length !== 0) {
+							followee.forEach(function (item, j) {
+								userInfo[0].following[j] = item.followee;
+							});
+						} else {
+							userInfo[0].following = [];
+						}
+						userInfo[0].subscriptions = [];
+						if (subcriptions.length !== 0) {
+							subcriptions.forEach(function (item, j) {
+								userInfo[0].subscriptions[j] = item.thread;
+							});
+						}
 
-					threadInfo[j].user = userInfo[0];
-				}
-				break;
-			case 'forum':
-				for (let j = 0; j < threadInfo.length; ++j) {
-					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
-					threadInfo[j].forum = forumInfo[0];
-				}
-				break;
+						threadInfo[j].user = userInfo[0];
+					}
+					break;
+				case 'forum':
+					for (let j = 0; j < threadInfo.length; ++j) {
+						forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
+						threadInfo[j].forum = forumInfo[0];
+					}
+					break;
+			}
 		}
+		let information = {
+			code: 0,
+			response: threadInfo
+		};
+	} else {
+		let information = {
+			code: 0,
+			response: {}
+		};
 	}
-	let information = {
-		code: 0,
-		response: threadInfo
-	};
 	this.body = information;
 });
 
@@ -290,8 +302,6 @@ router.get('/db/api/forum/listUsers', function *() {
 
 
 //POSTco
-
-
 router.post('/db/api/post/create', function *() {
 	let newPost = this.request.body;
 	let connection = yield mysql.getConnection();
@@ -323,12 +333,24 @@ router.post('/db/api/post/create', function *() {
 	let numOfPost = yield connection.query('select posts from Threads where id = ?', newPost.thread);
 	++numOfPost[0].posts;
 	yield connection.query('update Threads set posts = ? where id = ?;', [numOfPost[0].posts, newPost.thread]);
-	let fromPost = yield connection.query('select date, forum,	id,	isApproved, isDeleted, isEdited, isHighlighted, ' +
-		'isSpam, message, parent, thread, user from Posts where message = ? and date = ?', [newPost.message, newPost.date]);
 	let information = {
 		code: 0,
-		response: fromPost[0]
+		response: {
+			date: newPost.date,
+			forum: newPost.forum,
+			id: newID,
+			isApproved: newPost.isApproved,
+			isDeleted: newPost.isEdited,
+			isEdited: newPost.isEdited,
+			isHighlighted: newPost.isHighlighted,
+			isSpam: newPost.isSpam,
+			message: newPost.message,
+			parent: newPost.parent,
+			thread: newPost.thread,
+			user: newPost.user
+		}
 	};
+	++newID;
 	this.body = information;
 });
 
@@ -512,11 +534,17 @@ router.post('/db/api/user/create', function *() {
 	} else {
 		yield connection.query('insert into Users (username, about, isAnonymous, name, email) values (?,?,?,?,?);',
 			[newUser.username, newUser.about, newUser.isAnonymous, newUser.name, newUser.email]);
-		let fromPost = yield connection.query('select  about, email, id, isAnonymous, name, username from ' +
-			'Users where email = ?', [newUser.email]);
+		let fromPost = yield connection.query('select id from Users where email = ?', [newUser.email]);
 		let information = {
 			code: 0,
-			response: fromPost[0]
+			response: {
+				about: newUser.about,
+				email: newUser.email,
+				id: fromPost[0].id,
+				isAnonymous: newUser.isAnonymous,
+				name: newUser.name,
+				username: newUser.username
+			}
 		};
 		this.body = information;
 	}
