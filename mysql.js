@@ -13,8 +13,7 @@ exports.getConnection = function () {
 					host: 'localhost',
 					user: 'root',
 					password: 'Computer1',
-					database: 'forum',
-					waitForConnections: true
+					database: 'db'
 				})
 				.then(conn => {
 					connection = conn;

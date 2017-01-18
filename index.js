@@ -8,10 +8,7 @@ const koaBody = require('koa-body')();
 const logger = require('koa-logger');
 const mysql = require('./mysql');
 
-let newID = 0;
-let get = false;
-
-router.get('/db/api/status', function *() {
+router.get('/db/api/status/', function *() {
 	let connection = yield mysql.getConnection();
 	let [countUsers, countThreads, countForums, countPosts] = yield [
 		connection.query('select count(id) from Users;'),
@@ -22,10 +19,10 @@ router.get('/db/api/status', function *() {
 	let information = {
 		code: 0,
 		response: {
-			users: countUsers[0]['count(id)'],
-			threads: countThreads[0]['count(id)'],
-			forums: countForums[0]['count(id)'],
-			posts: countPosts[0]['count(id)']
+			user: countUsers[0]['count(id)'],
+			thread: countThreads[0]['count(id)'],
+			forum: countForums[0]['count(id)'],
+			post: countPosts[0]['count(id)']
 		}
 	};
 	this.body = information;
@@ -33,17 +30,19 @@ router.get('/db/api/status', function *() {
 
 router.post('/db/api/clear/', function *() {
 	let connection = yield mysql.getConnection();
-	yield connection.query('delete from Subscriptions;');
-	yield connection.query('delete from Followers;');
-	yield connection.query('delete from Forums;');
-	yield connection.query('delete from Users;');
-	yield connection.query('delete from Threads;');
-	yield connection.query('delete from Posts;');
+	yield [connection.query('truncate table Users;'),
+		connection.query('truncate table Posts;'),
+		connection.query('truncate table Forums;'),
+		connection.query('truncate table Threads;'),
+		connection.query('truncate table Followers;'),
+		connection.query('truncate table Subscriptions;')
+	];
 	let information = {
 		code: 0,
 		response: "OK"
 	};
 	this.body = information;
+	Clear = true;
 });
 
 //FORUM
@@ -51,15 +50,23 @@ router.post('/db/api/clear/', function *() {
 router.post('/db/api/forum/create', function *() {
 	let newForum = this.request.body;
 	let connection = yield mysql.getConnection();
-	let fromForum = yield [connection.query('insert into Forums (name, short_name, user) values (?,?,?);',
-		[newForum.name, newForum.short_name, newForum.user]),
-	 connection.query('select * from Forums where short_name = ?;', [newForum.short_name])
-	];
+	let test = yield connection.query('select id from Forums where short_name = ?', [newForum.short_name]);
+	if(test.length === 0){
+	yield connection.query('insert into Forums (name, short_name, user) values (?,?,?);',
+		[newForum.name, newForum.short_name, newForum.user]);
+	let fromForum = yield connection.query('select id, name, short_name, user from Forums where short_name = ?;', [newForum.short_name]);
 	let information = {
 		code: 0,
 		response: fromForum[0]
 	};
 	this.body = information;
+	} else {
+		let information = {
+			code : 5,
+			response : {}
+		}
+		this.body = information;
+	}
 });
 
 router.get('/db/api/forum/details', function *() {
@@ -101,9 +108,6 @@ router.get('/db/api/forum/listPosts', function *() {
 		moreInfo = moreInfo.split();
 	}
 	let connection = yield mysql.getConnection();
-	let threadInfo = {};
-	let userInfo = {};
-	let forumInfo = {};
 	let PostInfo;
 	if (limit === -1) {
 		if (forumSort === 'desc') {
@@ -133,7 +137,7 @@ router.get('/db/api/forum/listPosts', function *() {
 		switch (moreInfo[i]) {
 			case 'thread':
 				for (let j = 0; j < PostInfo.length; ++j) {
-					threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes, ' +
+					let threadInfo = yield connection.query('select date, dislikes, forum, id, isClosed, isDeleted, likes, ' +
 						'message, likes - dislikes as points, posts, slug, title, user from Threads where id = ?;',
 						[PostInfo[j].thread]);
 					threadInfo[0].date = moment(threadInfo[0].date).format('YYYY-MM-DD HH:mm:ss').toString();
@@ -142,14 +146,19 @@ router.get('/db/api/forum/listPosts', function *() {
 				break;
 			case 'user':
 				for (let j = 0; j < PostInfo.length; ++j) {
-					userInfo = yield connection.query('select * from Users where email = ?;', [PostInfo[j].user]);
+					let userInfo = yield connection.query('select * from Users where email = ?;', [PostInfo[j].user]);
 					PostInfo[j].user = userInfo[0];
 				}
 				break;
 			case 'forum':
 				for (let j = 0; j < PostInfo.length; ++j) {
-					forumInfo = yield connection.query('select * from Forums where short_name = ?;', [PostInfo[j].forum]);
-					PostInfo[j].forum = forumInfo[0];
+					let forumInfo = yield connection.query('select id, name, short_name, user from Forums where short_name = ?;', [PostInfo[j].forum]);
+                                        delete PostInfo[j].forum;
+                                        PostInfo[j].forum = {};
+					PostInfo[j].forum['id'] = forumInfo[0].id;
+                                        PostInfo[j].forum['name'] = forumInfo[0].name;
+                                        PostInfo[j].forum['short_name'] = forumInfo[0].short_name;
+                                        PostInfo[j].forum['user'] = forumInfo[0].user;
 				}
 				break;
 		}
@@ -187,58 +196,58 @@ router.get('/db/api/forum/listThreads', function *() {
 		threadInfo[k].date = moment(threadInfo[k].date).format('YYYY-MM-DD HH:mm:ss').toString();
 	}
 	let userInfo;
-	if(Clear) {
-		for (let i = 0; i < moreInfo.length; ++i) {
-			switch (moreInfo[i]) {
-				case 'user':
-					for (let j = 0; j < threadInfo.length; ++j) {
-						userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
-						let follower = yield connection.query('select follower from Followers where followee = ?;', [userInfo[0].email]);
-						let followee = yield  connection.query('select followee from Followers where follower = ?;', [userInfo[0].email]);
-						let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [userInfo[0].email]);
-						if (follower.length !== 0) {
-							follower.forEach(function (item, j) {
-								userInfo[0].followers[j] = item.follower;
-							});
-						} else {
-							userInfo[0].followers = [];
-						}
-						if (followee.length !== 0) {
-							followee.forEach(function (item, j) {
-								userInfo[0].following[j] = item.followee;
-							});
-						} else {
-							userInfo[0].following = [];
-						}
-						userInfo[0].subscriptions = [];
+	for (let i = 0; i < moreInfo.length; ++i) {
+		switch (moreInfo[i]) {
+			case 'user':
+				for (let j = 0; j < threadInfo.length; ++j) {
+					userInfo = yield connection.query('select * from Users where email = ?;', [threadInfo[j].user]);
+					let follower = yield connection.query('select follower from Followers where followee = ?;', [userInfo[0].email]);
+					let followee = yield  connection.query('select followee from Followers where follower = ?;', [userInfo[0].email]);
+					let subcriptions = yield connection.query('select thread from Subscriptions where user = ?;', [userInfo[0].email]);
+					if (follower.length !== 0) {
+						userInfo[0].followers = [];
+						follower.forEach(function (item, j) {
+							userInfo[0].followers[j] = item.follower;
+						});
+					} else {
+						userInfo[0].followers = [];
+					}
+					if (followee.length !== 0) {
+						console.log(followee);
+						userInfo[0].following = [];
+						followee.forEach(function (item, j) {
+							userInfo[0].following[j] = item.followee;
+						});
+					} else {
+						userInfo[0].following = [];
+					}
+					userInfo[0].subscriptions = [];
 						if (subcriptions.length !== 0) {
 							subcriptions.forEach(function (item, j) {
 								userInfo[0].subscriptions[j] = item.thread;
 							});
-						}
-
-						threadInfo[j].user = userInfo[0];
-					}
-					break;
-				case 'forum':
-					for (let j = 0; j < threadInfo.length; ++j) {
-						forumInfo = yield connection.query('select * from Forums where short_name = ?;', [threadInfo[j].forum]);
-						threadInfo[j].forum = forumInfo[0];
-					}
-					break;
+}
+					threadInfo[j].user = userInfo[0];
+				}
+				break;
+			case 'forum':
+				for (let j = 0; j < threadInfo.length; ++j) {
+					forumInfo = yield connection.query('select id, name, short_name, user from Forums where short_name = ?;', [threadInfo[j].forum]);
+					delete threadInfo[j].forum;
+					threadInfo[j].forum = {};
+					threadInfo[j].forum['id'] = forumInfo[0].id;
+					threadInfo[j].forum['name'] = forumInfo[0].name;
+					threadInfo[j].forum['short_name'] = forumInfo[0].short_name;
+					threadInfo[j].forum['user'] = forumInfo[0].user;
+				}
+				break;
 			}
 		}
-		let information = {
-			code: 0,
-			response: threadInfo
-		};
-	} else {
-		let information = {
-			code: 0,
-			response: {}
-		};
-	}
-	this.body = information;
+	let information = {
+		code: 0,
+		response: threadInfo
+	};
+	this.body = information;	
 });
 
 router.get('/db/api/forum/listUsers', function *() {
@@ -300,7 +309,6 @@ router.get('/db/api/forum/listUsers', function *() {
 	this.body = information;
 });
 
-
 //POSTco
 router.post('/db/api/post/create', function *() {
 	let newPost = this.request.body;
@@ -321,7 +329,10 @@ router.post('/db/api/post/create', function *() {
 		let num = sorter.indexOf('.');
 		sorter_date = sorter.slice(0, num);
 	} else {
-		sorter_date = '0' + id[0].id;
+		sorter_date = '' + id[0].id;
+		while(sorter_date.length < 6){
+			sorter_date = '0' + sorter_date;
+		}
 	}
 	let buffer = '' + id[0].id;
 	let nu = '';
@@ -338,7 +349,7 @@ router.post('/db/api/post/create', function *() {
 		response: {
 			date: newPost.date,
 			forum: newPost.forum,
-			id: newID,
+			id: id[0].id,
 			isApproved: newPost.isApproved,
 			isDeleted: newPost.isEdited,
 			isEdited: newPost.isEdited,
@@ -350,7 +361,6 @@ router.post('/db/api/post/create', function *() {
 			user: newPost.user
 		}
 	};
-	++newID;
 	this.body = information;
 });
 
@@ -444,7 +454,7 @@ router.post('/db/api/post/remove/', function *() {
 	let thread = yield connection.query('select thread from Posts where id = ?', [post.post]);
 	let numOfPost = yield connection.query('select posts from Threads where id = ?', [thread[0].thread]);
 	--numOfPost[0].posts;
-	yield connection.query('update Threads set posts = ? where id = ?;', [numOfPost[0].posts, thread[0].thread]);
+	yield connection.query('update Threads set posts = ? where id = ?;', [numOfPost[0].posts, thread[0].thread]);	
 	let information = {
 		code: 0,
 		response: post
@@ -548,6 +558,7 @@ router.post('/db/api/user/create', function *() {
 		};
 		this.body = information;
 	}
+
 });
 
 router.get('/db/api/user/details/', function *() {
@@ -560,7 +571,7 @@ router.get('/db/api/user/details/', function *() {
 	user[0].followers = [];
 	user[0].following = [];
 	user[0].subscriptions = [];
-	if (follower !== []) {
+	if (follower.lenght !== 0) {
 		follower.forEach(function (item, i) {
 			user[0].followers[i] = item.follower;
 		});
@@ -585,6 +596,8 @@ router.get('/db/api/user/details/', function *() {
 router.post('/db/api/user/follow', function *() {
 	let info = this.request.body;
 	let connection = yield mysql.getConnection();
+	let test = yield connection.query('select * from Followers where followee = ? and follower = ?;',[info.followee, info.follower]);
+	if(test.length === 0){
 	yield connection.query('insert into Followers (followee, follower) values (?,?);', [info.followee, info.follower]);
 	let user = yield connection.query('select * from Users where email = ?;', [info.follower]);
 	let follower = yield connection.query('select follower from Followers where followee = ?;', [info.follower]);
@@ -596,7 +609,6 @@ router.post('/db/api/user/follow', function *() {
 	follower.forEach(function (item, i) {
 		user[0].followers[i] = item.follower;
 	});
-
 	followee.forEach(function (item, i) {
 		user[0].following[i] = item.followee;
 	});
@@ -608,6 +620,13 @@ router.post('/db/api/user/follow', function *() {
 		response: user
 	};
 	this.body = information;
+	} else {
+		let information = {
+			code : 5,
+			response : {} 
+		};
+		this.body = information;
+	}
 });
 
 router.get('/db/api/user/listFollowers', function *() {
@@ -670,18 +689,18 @@ router.get('/db/api/user/listFollowing', function *() {
 	if (order === 'desc') {
 		if (limit === -1) {
 			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
-				' where follower = ? and id > ? order by followee desc;', [email, since]);
+				' where email = ? and id > ? order by followee desc;', [email, since]);
 		} else {
 			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
-				' where follower = ? and id > ? order by followee desc limit ?;', [email, since, +limit]);
+				' where email = ? and id > ? order by followee desc limit ?;', [email, since, +limit]);
 		}
 	} else {
 		if (limit === -1) {
 			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
-				' where follower = ? and id > ? order by followee asc;', [email, since]);
+				' where email = ? and id > ? order by followee asc;', [email, since]);
 		} else {
 			users = yield connection.query('select followee from Followers join Users on Followers.follower = Users.email' +
-				' where follower = ? and id > ? order by followee asc limit ?;', [email, since, +limit]);
+				' where email = ? and id > ? order by followee asc limit ?;', [email, since, +limit]);
 		}
 	}
 	for (let i = 0; i < users.length; ++i) {
@@ -761,7 +780,7 @@ router.post('/db/api/user/unfollow', function *() {
 		response: user[0]
 	};
 	this.body = information;
-})
+});
 
 router.post('/db/api/user/updateProfile/', function *() {
 	let info = this.request.body;
@@ -867,6 +886,7 @@ router.get('/db/api/thread/details/', function *() {
 		};
 		this.body = information;
 	}
+
 });
 
 router.get('/db/api/thread/list', function *() {
